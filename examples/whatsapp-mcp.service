@@ -1,0 +1,17 @@
+# systemd user service: keeps WhatsApp connected and serves MCP at http://127.0.0.1:3737/mcp
+#   cp examples/whatsapp-mcp.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now whatsapp-mcp
+#   journalctl --user -u whatsapp-mcp -f
+# Adjust the node path and checkout location below.
+[Unit]
+Description=whatsapp-mcp (WhatsApp MCP daemon)
+After=network-online.target
+
+[Service]
+WorkingDirectory=%h/whatsapp-mcp
+ExecStart=/usr/bin/env node %h/whatsapp-mcp/dist/index.js
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

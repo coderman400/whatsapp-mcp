@@ -1,0 +1,12 @@
+node_modules/
+dist/
+# Your WhatsApp session and message cache. Never commit these: the auth folder is a login to your account.
+.whatsapp-mcp/
+auth/
+auth_state/
+*.db
+*.db-shm
+*.db-wal
+link-qr.png
+link-code.txt
+.env
