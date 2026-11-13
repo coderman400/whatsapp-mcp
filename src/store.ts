@@ -43,6 +43,8 @@ export class Store {
       CREATE INDEX IF NOT EXISTS messages_ts ON messages(ts);
       CREATE INDEX IF NOT EXISTS messages_chat_ts ON messages(chat_jid, ts);
     `);
+    // Drop masked-number placeholders ("+91∙∙∙∙∙∙∙∙01") stored as names before they were filtered out.
+    this.db.exec(`UPDATE contacts SET name = NULL WHERE name LIKE '%∙%'; UPDATE chats SET name = NULL WHERE name LIKE '%∙%';`);
   }
 
   // --- identity -------------------------------------------------------------------------------------
@@ -83,6 +85,7 @@ export class Store {
   // --- writes ---------------------------------------------------------------------------------------
 
   upsertChat(c: { jid: string; name?: string | null; isGroup?: boolean; lastTs?: number | null; unread?: number | null }) {
+    c = { ...c, name: realName(c.name) };
     this.db
       .prepare(
         `INSERT INTO chats (jid, name, is_group, last_ts, unread) VALUES (@jid, @name, @isGroup, @lastTs, COALESCE(@unread, 0))
@@ -96,6 +99,8 @@ export class Store {
   }
 
   upsertContact(jid: string, name?: string | null, notify?: string | null) {
+    name = realName(name);
+    notify = realName(notify);
     this.db
       .prepare(
         `INSERT INTO contacts (jid, name, notify) VALUES (?, ?, ?)
@@ -199,4 +204,9 @@ export class Store {
     const n = (sql: string) => (this.db.prepare(sql).get() as { n: number }).n;
     return { chats: n("SELECT COUNT(*) n FROM chats"), contacts: n("SELECT COUNT(*) n FROM contacts"), messages: n("SELECT COUNT(*) n FROM messages") };
   }
+}
+
+/** WhatsApp sends a masked number ("+91∙∙∙∙∙∙∙∙01") as the name of contacts not in the address book; treat it as no name. */
+function realName(name?: string | null): string | null {
+  return name && !name.includes("∙") ? name : null;
 }

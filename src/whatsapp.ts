@@ -40,6 +40,7 @@ export class WhatsApp {
   ) {}
 
   async start(): Promise<void> {
+    this.importLidMappings();
     const { state, saveCreds } = await useMultiFileAuthState(path.join(this.cfg.dataDir, "auth"));
     const logger = pino({ level: this.cfg.logLevel }, destination(2));
     let version: [number, number, number] | undefined;
@@ -130,6 +131,27 @@ export class WhatsApp {
     });
     sock.ev.on("groups.upsert", (gs) => gs.forEach((g) => this.store.upsertChat({ jid: g.id, name: g.subject, isGroup: true })));
     sock.ev.on("groups.update", (gs) => gs.forEach((g) => g.id && g.subject && this.store.upsertChat({ jid: g.id, name: g.subject, isGroup: true })));
+  }
+
+  /** Baileys keeps lid -> phone mappings in its auth state (lid-mapping-<lid>_reverse.json) that never reach
+   *  our lid-mapping.update listener; copy them into the store so @lid chats resolve to phone numbers. */
+  private importLidMappings() {
+    const dir = path.join(this.cfg.dataDir, "auth");
+    let files: string[] = [];
+    try {
+      files = fs.readdirSync(dir).filter((f) => /^lid-mapping-\d+_reverse\.json$/.test(f));
+    } catch {
+      return;
+    }
+    for (const f of files) {
+      try {
+        const pn = JSON.parse(fs.readFileSync(path.join(dir, f), "utf8"));
+        const lid = f.slice("lid-mapping-".length, -"_reverse.json".length);
+        if (typeof pn === "string" && /^\d+$/.test(pn)) this.store.addLidMapping(`${lid}@lid`, `${pn}@s.whatsapp.net`);
+      } catch {
+        /* skip unreadable entries */
+      }
+    }
   }
 
   // --- linking --------------------------------------------------------------------------------------
