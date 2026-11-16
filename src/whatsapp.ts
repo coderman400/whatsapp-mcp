@@ -27,17 +27,36 @@ export type LinkState =
 
 const log = (...a: unknown[]) => console.error("[whatsapp]", ...a); // stderr: stdout may be an MCP stdio channel
 
+const STUCK_AFTER_MS = 3 * 60_000; // "connecting" this long means a reconnect hung; see startWatchdog
+const VERSION_TIMEOUT_MS = 10_000;
+
 export class WhatsApp {
   sock?: WASocket;
   status: LinkState = { state: "connecting" };
   private retries = 0;
   private sent = new Map<string, WAMessageContent>(); // recently sent, for WhatsApp's delivery retries
   private pairingRequested = false;
+  private connectingSince = Date.now();
 
   constructor(
     private readonly cfg: Config,
     private readonly store: Store,
   ) {}
+
+  /**
+   * Exits the process if we've been "connecting" for too long, so the supervisor (systemd) restarts us.
+   * A reconnect can hang without ever emitting open or close, which otherwise leaves us stuck for good.
+   * Not counted: waiting for the user to link (needs_link) or being logged out.
+   */
+  startWatchdog() {
+    setInterval(() => {
+      if (this.status.state !== "connecting") return;
+      const stuck = Date.now() - this.connectingSince;
+      if (stuck < STUCK_AFTER_MS) return;
+      log(`stuck connecting for ${Math.round(stuck / 1000)}s, exiting so the supervisor restarts us`);
+      process.exit(1);
+    }, 30_000).unref();
+  }
 
   async start(): Promise<void> {
     this.importLidMappings();
@@ -45,11 +64,20 @@ export class WhatsApp {
     const logger = pino({ level: this.cfg.logLevel }, destination(2));
     let version: [number, number, number] | undefined;
     try {
-      version = (await fetchLatestBaileysVersion()).version;
+      const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), VERSION_TIMEOUT_MS));
+      version = (await Promise.race([fetchLatestBaileysVersion(), timeout])).version;
     } catch {
       /* fall back to Baileys' bundled version */
     }
 
+    // Drop the previous socket if it's somehow still open. Detach it first so its close event is ignored.
+    const prev = this.sock;
+    this.sock = undefined;
+    try {
+      prev?.end(undefined);
+    } catch {
+      /* already closed */
+    }
     const sock = makeWASocket({
       version,
       logger,
@@ -63,6 +91,7 @@ export class WhatsApp {
     sock.ev.on("creds.update", saveCreds);
 
     sock.ev.on("connection.update", async (u) => {
+      if (sock !== this.sock) return; // a replaced socket must not trigger another reconnect
       if (u.qr) await this.onQr(u.qr);
       if (u.connection === "open") {
         this.retries = 0;
@@ -86,7 +115,10 @@ export class WhatsApp {
         this.pairingRequested = false; // a fresh socket gets a fresh pairing code
         const delay = code === DisconnectReason.restartRequired ? 0 : Math.min(60_000, 2_000 * 2 ** this.retries++);
         log(`connection closed (${code ?? "unknown"}), reconnecting in ${delay / 1000}s`);
-        if (this.status.state === "connected") this.status = { state: "connecting" };
+        if (this.status.state === "connected") {
+          this.status = { state: "connecting" };
+          this.connectingSince = Date.now();
+        }
         setTimeout(() => void this.start().catch((e) => log("reconnect failed:", e)), delay);
       }
     });

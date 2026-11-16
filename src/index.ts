@@ -35,6 +35,7 @@ if (argv.includes("--help") || argv.includes("-h")) {
 const cfg = loadConfig(argv);
 const store = new Store(path.join(cfg.dataDir, "messages.db"));
 const wa = new WhatsApp(cfg, store);
+if (!cfg.stdio) wa.startWatchdog(); // daemon runs under a supervisor that restarts it; stdio clients may not
 await wa.start();
 
 if (cfg.stdio) {
