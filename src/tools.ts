@@ -130,6 +130,32 @@ export function buildServer(store: Store, wa: WhatsApp): McpServer {
   );
 
   server.registerTool(
+    "chat_feed",
+    {
+      description:
+        "Machine-readable recent messages in one chat (JSON with message ids), for programs that follow a conversation. People should use get_messages.",
+      inputSchema: {
+        chat: z.string().describe("chat JID"),
+        limit: z.number().int().min(1).max(300).optional().describe("default 40"),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async (a) => {
+      const jid = store.canonical(a.chat.trim());
+      if (!jid) return fail(`Not a chat JID: ${a.chat}`);
+      const messages = store.messages(jid, a.limit ?? 40).map((m) => ({
+        id: m.id,
+        fromMe: !!m.from_me,
+        sender: m.from_me ? "You" : store.nameOf(m.sender),
+        ts: m.ts,
+        type: m.type,
+        text: m.text,
+      }));
+      return text(JSON.stringify({ jid, name: store.nameOf(jid), messages }));
+    },
+  );
+
+  server.registerTool(
     "search_messages",
     {
       description: "Full-text search across cached messages (newest first), optionally within one chat and/or since a time.",
